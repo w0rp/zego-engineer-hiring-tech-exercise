@@ -1,6 +1,6 @@
 # Define Python version variables
-ARG PYTHON_MINOR=3.15
-ARG PYTHON_FULL=3.15.0a8
+ARG PYTHON_MINOR=3.14
+ARG PYTHON_FULL=3.14.4
 ARG DISTROLESS_TAG=3.14.4-debian13
 
 ##################
@@ -61,9 +61,6 @@ RUN UV_PROJECT_ENVIRONMENT=/app/.venv \
 ##################
 ### prod image ###
 ##################
-# Distroless has no 3.15.0a8 tag. Start from a newer Debian 13 distroless
-# image, then overlay the full /usr/local runtime from the 3.15.0a8 base
-# image.
 FROM al3xos/python-distroless:${DISTROLESS_TAG} AS prod
 ARG PYTHON_MINOR
 ARG PYTHON_FULL
@@ -86,7 +83,7 @@ COPY --from=base /usr/share/fontconfig/ /usr/share/fontconfig/
 # NOTE: You may copy binaries or other files you need here.
 # COPY --from=base /usr/bin/an-executable /usr/local/bin/an-executable
 
-# Overlay CPython 3.15.0a8 runtime and stdlib from the base image.
+# Overlay CPython runtime and stdlib from the base image.
 COPY --from=base /usr/local/ /usr/local/
 
 # Copy the `uv` installed application.
