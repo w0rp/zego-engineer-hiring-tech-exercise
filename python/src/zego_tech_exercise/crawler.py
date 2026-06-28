@@ -11,10 +11,12 @@ from concurrent.futures import (
 from dataclasses import dataclass
 from html.parser import HTMLParser
 from urllib.parse import SplitResult, urldefrag, urljoin, urlsplit, urlunsplit
-from urllib.request import Request, urlopen
+
+import httpx
 
 FetchPage = Callable[[str, float], str]
 ErrorHandler = Callable[[str, Exception], None]
+USER_AGENT = "zego-tech-exercise-crawler/0.1"
 
 
 @dataclass(frozen=True)
@@ -87,11 +89,69 @@ def crawl_site(
     if base_hostname is None:
         raise ValueError("base URL must include a hostname")
 
-    effective_fetch_page = fetch_page or default_fetch_page
     queue: deque[str] = deque([normalized_base_url])
     scheduled = {normalized_base_url}
 
-    with ThreadPoolExecutor(max_workers=crawl_config.concurrency) as executor:
+    if fetch_page is not None:
+        yield from _crawl_with_fetcher(
+            crawl_config,
+            fetch_page,
+            base_hostname,
+            queue,
+            scheduled,
+            on_error,
+        )
+        return
+
+    limits = httpx.Limits(
+        max_connections=crawl_config.concurrency,
+        max_keepalive_connections=crawl_config.concurrency,
+    )
+    with httpx.Client(
+        follow_redirects=True,
+        headers={"User-Agent": USER_AGENT},
+        limits=limits,
+    ) as client:
+        def fetch_with_client(url: str, timeout: float) -> str:
+            return default_fetch_page(client, url, timeout)
+
+        yield from _crawl_with_fetcher(
+            crawl_config,
+            fetch_with_client,
+            base_hostname,
+            queue,
+            scheduled,
+            on_error,
+        )
+
+
+def default_fetch_page(
+    client: httpx.Client,
+    url: str,
+    timeout: float,
+) -> str:
+    response = client.get(url, timeout=timeout)
+    response.raise_for_status()
+
+    content_type = response.headers.get("content-type", "").split(";")[0]
+    if content_type.strip().lower() not in {
+        "text/html",
+        "application/xhtml+xml",
+    }:
+        return ""
+
+    return response.text
+
+
+def _crawl_with_fetcher(
+    config: CrawlConfig,
+    fetch_page: FetchPage,
+    base_hostname: str,
+    queue: deque[str],
+    scheduled: set[str],
+    on_error: ErrorHandler | None,
+) -> Iterator[PageLinks]:
+    with ThreadPoolExecutor(max_workers=config.concurrency) as executor:
         pending: dict[Future[PageLinks], str] = {}
 
         while queue or pending:
@@ -99,8 +159,8 @@ def crawl_site(
                 executor,
                 queue,
                 pending,
-                crawl_config,
-                effective_fetch_page,
+                config,
+                fetch_page,
             )
             if not pending:
                 break
@@ -120,32 +180,16 @@ def crawl_site(
                     base_hostname,
                     scheduled,
                     queue,
-                    crawl_config.max_pages,
+                    config.max_pages,
                 )
                 _submit_pending(
                     executor,
                     queue,
                     pending,
-                    crawl_config,
-                    effective_fetch_page,
+                    config,
+                    fetch_page,
                 )
                 yield page_links
-
-
-def default_fetch_page(url: str, timeout: float) -> str:
-    request = Request(
-        url,
-        headers={"User-Agent": "zego-tech-exercise-crawler/0.1"},
-    )
-    with urlopen(request, timeout=timeout) as response:
-        content_type = response.headers.get_content_type()
-        if content_type not in {"text/html", "application/xhtml+xml"}:
-            return ""
-
-        charset = response.headers.get_content_charset() or "utf-8"
-        body = response.read()
-
-    return body.decode(charset, errors="replace")
 
 
 def extract_links(html: str, base_url: str) -> tuple[str, ...]:
@@ -169,10 +213,6 @@ def normalize_url(raw_url: str, *, base_url: str | None = None) -> str | None:
         return None
 
     return urlunsplit(_normalized_parts(split_url))
-
-
-def is_same_hostname(url: str, hostname: str) -> bool:
-    return _hostname(url) == hostname
 
 
 def _submit_pending(
@@ -205,7 +245,7 @@ def _queue_same_domain_links(
     max_pages: int | None,
 ) -> None:
     for link in page_links.links:
-        if not is_same_hostname(link, base_hostname):
+        if _hostname(link) != base_hostname:
             continue
         if link in scheduled:
             continue

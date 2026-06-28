@@ -1,6 +1,7 @@
 import sys
 from threading import Event
 
+import httpx
 import pytest
 from _pytest.capture import CaptureFixture
 from _pytest.monkeypatch import MonkeyPatch
@@ -10,8 +11,8 @@ from zego_tech_exercise.crawler import (
     CrawlConfig,
     PageLinks,
     crawl_site,
+    default_fetch_page,
     extract_links,
-    is_same_hostname,
     normalize_url,
 )
 
@@ -31,12 +32,6 @@ def test_normalize_url_ignores_non_http_urls() -> None:
     assert normalize_url("javascript:void(0)") is None
 
 
-def test_same_hostname_excludes_subdomains() -> None:
-    assert is_same_hostname("https://example.test/page", "example.test")
-    subdomain_url = "https://www.example.test/page"
-    assert not is_same_hostname(subdomain_url, "example.test")
-
-
 def test_extract_links_reads_anchor_href_values_only() -> None:
     html = """
     <a href="/about">About</a>
@@ -51,6 +46,35 @@ def test_extract_links_reads_anchor_href_values_only() -> None:
         "https://example.test/about",
         "https://other.test/",
     )
+
+
+def test_default_fetch_page_uses_httpx_client() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.headers["user-agent"]
+        return httpx.Response(
+            200,
+            headers={"content-type": "text/html; charset=utf-8"},
+            text='<a href="/about">About</a>',
+        )
+
+    with httpx.Client(transport=httpx.MockTransport(handler)) as client:
+        assert (
+            default_fetch_page(client, "https://example.test/", timeout=1)
+            == '<a href="/about">About</a>'
+        )
+
+
+def test_default_fetch_page_skips_non_html() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        del request
+        return httpx.Response(
+            200,
+            headers={"content-type": "application/json"},
+            text='{"ok": true}',
+        )
+
+    with httpx.Client(transport=httpx.MockTransport(handler)) as client:
+        assert default_fetch_page(client, "https://example.test/", 1) == ""
 
 
 def test_crawl_site_crawls_same_domain_links_only() -> None:

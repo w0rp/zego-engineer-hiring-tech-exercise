@@ -113,11 +113,11 @@ entrypoint. The module exposes `CrawlConfig`, `PageLinks`, `crawl_site`,
 real network requests. The CLI is responsible only for argument parsing,
 warning output, and rendering each parsed page yielded by the crawler.
 
-The implementation uses only the Python standard library. `urllib.request`
-handles HTTP requests, `html.parser.HTMLParser` extracts `a[href]` links, and
-`concurrent.futures.ThreadPoolExecutor` provides bounded concurrency. This keeps
-the dependency surface small while still making good use of I/O parallelism,
-which is the main bottleneck for a crawler like this.
+HTTP requests are made through a shared `httpx.Client` so connections can be
+kept alive and reused across page fetches. `html.parser.HTMLParser` extracts
+`a[href]` links, and `concurrent.futures.ThreadPoolExecutor` provides bounded
+concurrency. This keeps the implementation simple while avoiding the repeated
+TCP/TLS setup cost that dominates many same-domain crawls.
 
 URLs are normalised before they are stored or compared: fragments are removed,
 relative links are resolved, schemes and hostnames are normalised to lower case,
@@ -129,10 +129,12 @@ exactly matches the base URL hostname. That means subdomains such as
 base hostname is `example.com`.
 
 Concurrency is intentionally bounded with `--concurrency` so the crawler can be
-fast without creating unbounded network load. `--timeout` prevents individual
-requests from hanging indefinitely, and `--max-pages` gives a simple safety
-limit for exploratory runs. Fetch errors are reported as warnings and do not
-stop the rest of the crawl.
+fast without creating unbounded network load. The same value is used for the
+HTTP connection pool limits, which keeps request concurrency and pooled
+connections aligned. `--timeout` prevents individual requests from hanging
+indefinitely, and `--max-pages` gives a simple safety limit for exploratory
+runs. Fetch errors are reported as warnings and do not stop the rest of the
+crawl.
 
 ## Options considered
 
@@ -143,11 +145,12 @@ considered, but the standard library does not provide a high-level async HTTP
 client. Threads are a simpler fit here because the work is I/O-bound and the
 required concurrency is modest.
 
-Adding third-party libraries such as `httpx`, `aiohttp`, or Beautiful Soup
-would improve ergonomics for HTTP and malformed HTML handling, but they also
-increase setup and maintenance cost. For this exercise, standard library
-parsing is accurate enough for conventional anchor links and keeps the project
-easy to run.
+Adding a third-party HTTP library increases the dependency surface, but profiling
+showed repeated connection setup dominating same-host crawls. `httpx` is used
+for synchronous connection pooling while keeping the crawler's concurrency model
+simple. Beautiful Soup would improve malformed HTML handling, but standard
+library parsing is accurate enough for conventional anchor links and avoids an
+additional parser dependency.
 
 The crawler currently extracts only `a[href]` links. It intentionally does not
 extract images, scripts, stylesheets, `area[href]`, JavaScript-discovered

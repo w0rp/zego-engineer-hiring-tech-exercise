@@ -21,6 +21,7 @@ requires-python = ">=3.14.4,<3.16"
 
 # Core dependencies
 dependencies = [
+    "httpx>=0.28.1",
 ]
 
 [dependency-groups]
