@@ -73,6 +73,11 @@ the trade-offs you made during the development process, and aspects you might ha
 
 ## Solution
 
+This project was built with some instructions and Codex, with GPT 5.5 on xhigh
+mode. The project was bootstrapped with a Dense Analysis Python skeleton for
+creating new projects. The project was built initially with all Python first
+party library functions, then enhanced with httpx for speed.
+
 This project implements a command-line crawler that accepts one HTTP or HTTPS
 base URL, fetches pages from that exact hostname, and prints each crawled page
 with the hyperlinks found on it as soon as that page has been fetched and
