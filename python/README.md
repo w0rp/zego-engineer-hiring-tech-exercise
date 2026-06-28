@@ -71,6 +71,134 @@ and what alternatives might be more suitable. Also, feel free to set the repo up
 Extend this README to include a detailed discussion about your design decisions, the options you considered and
 the trade-offs you made during the development process, and aspects you might have addressed or refined if not constrained by time.
 
+## Solution
+
+This project was built with some instructions and Codex, with GPT 5.5 on xhigh
+mode. The project was bootstrapped with a Dense Analysis Python skeleton for
+creating new projects. The project was built initially with all Python first
+party library functions, then enhanced with httpx for speed.
+
+This project implements a command-line crawler that accepts one HTTP or HTTPS
+base URL, fetches pages from that exact hostname, and prints each crawled page
+with the hyperlinks found on it as soon as that page has been fetched and
+parsed.
+
+Run it with:
+
+```sh
+uv run python -m zego_tech_exercise https://example.com
+```
+
+Optional controls are available for resource usage:
+
+```sh
+uv run python -m zego_tech_exercise https://example.com \
+  --concurrency 10 \
+  --timeout 10 \
+  --max-pages 100
+```
+
+The output is deliberately plain text so it can be read by humans or piped to
+other tools. Because pages are fetched concurrently, pages are printed in the
+order they finish rather than sorted URL order:
+
+```text
+https://example.com/
+  https://example.com/about
+  https://external.example/
+https://example.com/about
+  https://example.com/
+```
+
+## Design decisions
+
+The crawler is split into a small reusable crawling module and a thin CLI
+entrypoint. The module exposes `CrawlConfig`, `PageLinks`, `crawl_site`,
+`extract_links`, and URL helpers so the behaviour can be tested without making
+real network requests. The CLI is responsible only for argument parsing,
+warning output, and rendering each parsed page yielded by the crawler.
+
+HTTP requests are made through a shared `httpx.Client` so connections can be
+kept alive and reused across page fetches. `html.parser.HTMLParser` extracts
+`a[href]` links, and `concurrent.futures.ThreadPoolExecutor` provides bounded
+concurrency. This keeps the implementation simple while avoiding the repeated
+TCP/TLS setup cost that dominates many same-domain crawls.
+
+URLs are normalised before they are stored or compared: fragments are removed,
+relative links are resolved, schemes and hostnames are normalised to lower case,
+empty paths become `/`, and default HTTP/HTTPS ports are stripped. Only `http`
+and `https` links are retained. The crawler prints all links found on a crawled
+page, including external domains, but it only queues links whose hostname
+exactly matches the base URL hostname. That means subdomains such as
+`www.example.com` or `blog.example.com` are reported but not crawled when the
+base hostname is `example.com`.
+
+Concurrency is intentionally bounded with `--concurrency` so the crawler can be
+fast without creating unbounded network load. The same value is used for the
+HTTP connection pool limits, which keeps request concurrency and pooled
+connections aligned. `--timeout` prevents individual requests from hanging
+indefinitely, and `--max-pages` gives a simple safety limit for exploratory
+runs. Fetch errors are reported as warnings and do not stop the rest of the
+crawl.
+
+## Options considered
+
+Using Scrapy or Playwright would provide more features, but the exercise
+explicitly excludes those tools and they would be heavy for the required
+behaviour. A fully asynchronous implementation using `asyncio` was also
+considered, but the standard library does not provide a high-level async HTTP
+client. Threads are a simpler fit here because the work is I/O-bound and the
+required concurrency is modest.
+
+Adding a third-party HTTP library increases the dependency surface, but profiling
+showed repeated connection setup dominating same-host crawls. `httpx` is used
+for synchronous connection pooling while keeping the crawler's concurrency model
+simple. Beautiful Soup would improve malformed HTML handling, but standard
+library parsing is accurate enough for conventional anchor links and avoids an
+additional parser dependency.
+
+The crawler currently extracts only `a[href]` links. It intentionally does not
+extract images, scripts, stylesheets, `area[href]`, JavaScript-discovered
+routes, or inline text URLs. That keeps the definition of a page link clear and
+matches the command-line output requested by the exercise.
+
+## Verification
+
+The project was verified with:
+
+```sh
+uv run pytest
+uv run pyright
+uv run ruff check
+```
+
+The tests cover URL normalisation, ignored schemes, exact-hostname filtering,
+anchor extraction, duplicate suppression, same-domain crawling, external and
+subdomain reporting without crawling, fetch-error handling, `--max-pages`, and
+basic CLI validation.
+
+## Development workflow and tooling
+
+Development was performed in a command-line environment using `uv` for project
+execution, `pytest` for tests, `pyright` for strict type checking, and `ruff`
+for linting. Repository exploration used shell tools including `rg`, `sed`, and
+Git status checks.
+
+Interactive AI assistance was used via Codex to inspect the repository, plan
+the implementation, edit the code, update tests and documentation, and run the
+verification commands. No generated code was accepted without running the local
+test, lint, and type-checking commands above.
+
+## Future refinements
+
+Given more time, the crawler could be extended with robots.txt support,
+sitemap discovery, response-size limits, retry and backoff policy, structured
+JSON output, persistent crawl state, per-host rate limiting, configurable URL
+normalisation rules, and richer observability. For larger crawls or multiple
+domains, a long-running service with a job queue, worker pool, database-backed
+state, and API-driven control plane would be more appropriate than a one-shot
+CLI process.
+
 # Instructions
 
 1. Create a repo.
